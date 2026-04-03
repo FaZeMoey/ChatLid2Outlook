@@ -55,14 +55,14 @@ router.get('/microsoft/callback', async (req, res) => {
 });
 
 // Initiate GHL OAuth (location-level)
-// GET /auth/ghl/connect
-router.get('/ghl/connect', (_req, res) => {
+// GET /auth/crm/connect
+router.get('/crm/connect', (_req, res) => {
   const url = ghlAuth.getAuthUrl();
   res.redirect(url);
 });
 
 // GHL OAuth callback
-router.get('/ghl/callback', async (req, res) => {
+router.get('/crm/callback', async (req, res) => {
   try {
     const { code } = req.query;
     if (!code) return res.status(400).json({ error: 'No code provided' });
