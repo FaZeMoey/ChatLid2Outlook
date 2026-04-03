@@ -59,41 +59,49 @@ router.post('/microsoft', async (req, res) => {
 
 // --- GHL Webhook ---
 // POST /webhooks/ghl
+// Handles both standard GHL webhook payloads AND custom workflow webhook data
 router.post('/ghl', async (req, res) => {
   res.sendStatus(200);
 
   try {
     const payload = req.body;
-    const eventType = payload.type || payload.event;
+    logger.info({ payload }, 'GHL webhook received');
 
-    logger.info({ eventType }, 'GHL webhook received');
+    // Normalize the appointment data — handle custom workflow fields
+    const appointment = normalizeGhlPayload(payload);
 
-    // Map GHL webhook event types to actions
-    let action;
-    if (eventType?.includes('create') || eventType?.includes('Create')) action = 'create';
-    else if (eventType?.includes('update') || eventType?.includes('Update')) action = 'update';
-    else if (eventType?.includes('delete') || eventType?.includes('Delete')) action = 'delete';
-    else {
-      logger.debug({ eventType }, 'Ignoring unhandled GHL webhook type');
+    if (!appointment.id) {
+      logger.warn('GHL webhook missing appointment ID');
       return;
     }
 
-    const appointment = payload.data || payload;
-    const assignedUserId = appointment.assignedUserId || appointment.userId;
+    // Determine action from event type or default to 'update'
+    const eventType = payload.type || payload.event || payload.event_type || '';
+    let action = 'update';
+    if (eventType.toLowerCase().includes('create') || eventType.toLowerCase().includes('new')) action = 'create';
+    else if (eventType.toLowerCase().includes('delete') || eventType.toLowerCase().includes('cancel')) action = 'delete';
 
-    if (!assignedUserId) {
-      logger.warn('GHL webhook missing assignedUserId');
-      return;
+    // Find staff mapping by assignedUserId or by contact email
+    const assignedUserId = appointment.assignedUserId;
+    let staffMapping;
+
+    if (assignedUserId) {
+      staffMapping = db.get(
+        'SELECT * FROM staff_mappings WHERE ghl_user_id = ? AND is_active = 1',
+        [assignedUserId]
+      );
     }
 
-    // Find the staff mapping for this GHL user
-    const staffMapping = db.get(
-      'SELECT * FROM staff_mappings WHERE ghl_user_id = ? AND is_active = 1',
-      [assignedUserId]
-    );
+    // If no direct match, try to find by existing sync_map entry
+    if (!staffMapping && appointment.id) {
+      const syncEntry = db.get('SELECT staff_mapping_id FROM sync_map WHERE ghl_appointment_id = ?', [appointment.id]);
+      if (syncEntry) {
+        staffMapping = db.get('SELECT * FROM staff_mappings WHERE id = ? AND is_active = 1', [syncEntry.staff_mapping_id]);
+      }
+    }
 
     if (!staffMapping) {
-      logger.warn({ assignedUserId }, 'No staff mapping for GHL user');
+      logger.warn({ assignedUserId, appointmentId: appointment.id }, 'No staff mapping found for webhook');
       return;
     }
 
@@ -108,5 +116,24 @@ router.post('/ghl', async (req, res) => {
     logger.error({ err }, 'Failed to process GHL webhook');
   }
 });
+
+// Normalize GHL payload — maps custom workflow fields to standard format
+function normalizeGhlPayload(payload) {
+  const data = payload.data || payload;
+  return {
+    id: data.appointment_id || data.id || data.eventId,
+    title: data.appointment_title || data.title || data.name,
+    startTime: data.appointment_start_time || data.startTime || data.start_time,
+    endTime: data.appointment_end_time || data.endTime || data.end_time,
+    notes: data.appointment_notes || data.notes || data.description,
+    meetingLocation: data.appointment_meeting_location || data.meetingLocation || data.location,
+    contactId: data.contact_id || data.contactId,
+    contactName: data.contact_full_name || data.contactName,
+    contactEmail: data.contact_email || data.contactEmail,
+    contactPhone: data.contact_phone || data.contactPhone,
+    assignedUserId: data.assignedUserId || data.assigned_user_id || data.userId,
+    updatedAt: data.updatedAt || new Date().toISOString(),
+  };
+}
 
 module.exports = router;
