@@ -15,6 +15,42 @@ router.use((req, res, next) => {
   next();
 });
 
+// --- Fetch GHL Users (to find user IDs) ---
+
+router.get('/ghl-users', async (_req, res) => {
+  try {
+    const tokenManager = require('../services/token-manager');
+    const axios = require('axios');
+    const ghlApi = require('../services/ghl-api');
+    const locationId = ghlApi.getLocationId();
+    const token = await tokenManager.getAccessToken('ghl', locationId);
+
+    const { data } = await axios.get(
+      `https://services.leadconnectorhq.com/users/search`,
+      {
+        params: { companyId: locationId, locationId },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          Version: '2021-07-28',
+        },
+      }
+    );
+
+    const users = (data.users || []).map(u => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+    }));
+
+    res.json({ users, locationId });
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch GHL users');
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Staff Mappings CRUD ---
 
 // List all staff mappings
