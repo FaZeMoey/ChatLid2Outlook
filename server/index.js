@@ -21,9 +21,13 @@ app.use('/auth', require('./routes/auth.routes'));
 app.use('/webhooks', require('./routes/webhook.routes'));
 app.use('/admin', require('./routes/admin.routes'));
 
-// Start background jobs
-require('./jobs/poll-sync').start();
-require('./jobs/subscription-renew').start();
+// Start background jobs (wrapped in try-catch to prevent startup crash)
+try {
+  require('./jobs/poll-sync').start();
+  require('./jobs/subscription-renew').start();
+} catch (err) {
+  logger.error({ err }, 'Failed to start background jobs');
+}
 
 app.listen(config.port, () => {
   logger.info(`ChatLid2Outlook running on port ${config.port}`);
